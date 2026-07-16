@@ -49,7 +49,7 @@ func NewFileSource(path string) (*FileSource, error) {
 }
 
 func (s *FileSource) Read(p []byte) (int, error) { return s.f.Read(p) }
-func (s *FileSource) Close() error                { return s.f.Close() }
+func (s *FileSource) Close() error               { return s.f.Close() }
 
 func (s *FileSource) Size() (int64, bool) {
 	info, err := s.f.Stat()
