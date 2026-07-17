@@ -1,0 +1,8 @@
+{
+  "delimiter": ",",
+  "hasHeader": true,
+  "columns": [
+    {"name": "city", "type": 0, "kind": 0},
+    {"name": "temperature", "type": 2, "kind": 1}
+  ]
+}

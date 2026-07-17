@@ -1,0 +1,5 @@
+city,temperature
+Tokyo,23.5
+BadRow
+Osaka,not-a-number
+Kyoto,19.8

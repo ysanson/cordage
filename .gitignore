@@ -30,3 +30,6 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Generated benchmark datasets (reproducible via cmd/gen1brc; not committed)
+/benchmarks/data/
