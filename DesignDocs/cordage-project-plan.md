@@ -47,15 +47,15 @@ A distributed, in-memory analytics engine written in Go. Ingests large tabular d
 ## 3. Milestones
 
 ### M0 — Single-node baseline (this is your "1BRC, but reusable")
-- [ ] Read a large CSV (start with the 1BRC dataset itself — you already have it) with buffered, chunked I/O
-- [ ] Implement group-by + aggregate (sum, count, min, max, avg) using a single goroutine, correctness-first
-- [ ] Add a benchmark harness: rows/sec, wall time, peak RSS — write results to a `BENCHMARKS.md` from day one
+- [X] Read a large CSV (start with the 1BRC dataset itself — you already have it) with buffered, chunked I/O
+- [X] Implement group-by + aggregate (sum, count, min, max, avg) using a single goroutine, correctness-first
+- [X] Add a benchmark harness: rows/sec, wall time, peak RSS — write results to a `BENCHMARKS.md` from day one
 - **Exit criteria:** correct output on the 1BRC dataset, benchmarked baseline number to beat
 
 ### M1 — Concurrency within a single node
-- [ ] Parallelize parsing/aggregation across goroutines (worker pool over file chunks)
-- [ ] Merge per-goroutine partial aggregates into a final result (this *is* the map-reduce shape, just intra-process first)
-- [ ] Compare against M0 baseline — this is your first real "engineering tradeoffs" story for the README
+- [X] Parallelize parsing/aggregation across goroutines (worker pool over file chunks)
+- [X] Merge per-goroutine partial aggregates into a final result (this *is* the map-reduce shape, just intra-process first)
+- [X] Compare against M0 baseline — this is your first real "engineering tradeoffs" story for the README
 - **Exit criteria:** documented speedup vs M0, with an explanation of where the ceiling is (I/O-bound vs CPU-bound)
 
 ### M2 — Algorithmic depth

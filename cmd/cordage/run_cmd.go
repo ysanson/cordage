@@ -19,6 +19,7 @@ func runRun(args []string) error {
 	schemaPath := fs.String("schema", "", "path to a JSON schema file (required: aggregation needs typed columns, which header-only inference can't provide)")
 	onErrorFlag := fs.String("on-error", "skip", "row error policy: skip or fail")
 	chunks := fs.Int("chunks", 1, "number of concurrent byte-range chunks to read a file with (ignored for stdin)")
+	workers := fs.Int("workers", 0, "number of concurrent aggregation worker goroutines (0 = match -chunks)")
 	batchSize := fs.Int("batch-size", 0, "rows per batch (0 = package default)")
 	bufferSize := fs.Int("buffer-size", 0, "per-chunk read buffer size in bytes (0 = package default)")
 	quiet := fs.Bool("quiet", false, "suppress per-row skip messages")
@@ -41,8 +42,9 @@ func runRun(args []string) error {
 	if *groupBy != "" {
 		spec.GroupBy = strings.Split(*groupBy, ",")
 	}
-	agg, err := aggregate.New(schema, spec)
-	if err != nil {
+	// Fail fast on a bad -group-by/-measure before touching the file;
+	// aggregate.RunParallel builds its own per-worker Aggregators below.
+	if _, err := aggregate.New(schema, spec); err != nil {
 		return err
 	}
 
@@ -72,26 +74,33 @@ func runRun(args []string) error {
 		},
 	}
 
-	start := time.Now()
-	batches, errs := ingest.Ingest(context.Background(), src, cfg)
-
-	var rows int64
-	for b := range batches {
-		if err := agg.Add(b); err != nil {
-			b.Release()
-			return err
-		}
-		rows += int64(b.NumRows)
-		b.Release()
+	nWorkers := *workers
+	if nWorkers <= 0 {
+		nWorkers = *chunks
 	}
+	if nWorkers <= 0 {
+		nWorkers = 1
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	start := time.Now()
+	batches, errs := ingest.Ingest(ctx, src, cfg)
+
+	agg, rows, addErr := aggregate.RunParallel(schema, spec, batches, nWorkers, cancel)
 	elapsed := time.Since(start)
 
-	if err := <-errs; err != nil {
-		return err
+	if ingestErr := <-errs; ingestErr != nil && addErr == nil {
+		return ingestErr
+	}
+	if addErr != nil {
+		return addErr
 	}
 
 	printResult(agg.Result())
-	fmt.Printf("rows=%d skipped=%d elapsed=%s rows/sec=%.0f\n", rows, skipped, elapsed, float64(rows)/elapsed.Seconds())
+	fmt.Printf("rows=%d skipped=%d elapsed=%s rows/sec=%.0f chunks=%d workers=%d\n",
+		rows, skipped, elapsed, float64(rows)/elapsed.Seconds(), *chunks, nWorkers)
 	return nil
 }
 
