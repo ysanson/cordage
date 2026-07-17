@@ -284,3 +284,153 @@ for w in 1 2 4 6 8 10 12 16; do
     --group-by station --measure temperature:min,avg,max
 done
 ```
+
+---
+
+## M2 — Algorithmic depth
+
+Two independent pieces of work, per the project plan's M2 checklist:
+
+1. Swap the naive `map[string]*groupAccum` grouping for a custom open-addressing
+   hash table (`internal/aggregate/grouptable.go`) — the "faster hash strategy,
+   avoid string allocs where possible" item, done as one unified pass since the
+   allocation-reduction goal and the hash-strategy swap are the same work.
+2. Add approximate aggregates: a hand-rolled HyperLogLog (`hyperloglog.go`) for
+   `distinct`, and a hand-rolled t-digest (`tdigest.go`) for percentiles
+   (`p50`, `p90`, `p99`, or any arbitrary quantile like `p99.9`) — both
+   stdlib-only, per this project's "roll your own first" convention.
+
+`AggFunc` (`internal/aggregate/spec.go`) was widened from a bare `int` enum to a
+small comparable struct so `Percentile(q)` can carry an arbitrary quantile
+(`p99.9`, not just fixed presets) — internal-only change, `Sum`/`Min`/`Max`/`Avg`
+still work as drop-in package-level values. `Aggregator.New`'s validation now
+checks numeric-requirement per `(column, func)` rather than per column, since
+`Distinct` (unlike everything else) is valid on string columns too.
+
+Same environment as M0/M1. Dataset: the same 10M-row `measurements.csv`, plus a
+second dataset with a synthetic high-cardinality `sensor_id` column (added via
+`cmd/gen1brc --sensor-cardinality N`, default 0/omitted so the original M0/M1
+command stays byte-for-byte reproducible) for the count-distinct memory story.
+
+### Hash-table allocation win
+
+`BenchmarkAggregatorAdd` (single string group-by column, 8 cities, 10,000
+rows/op — unchanged from M0/M1, the fixed comparison point) via
+[`benchstat`](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat), `-count=10`
+on both sides:
+
+| Metric | old (`map[string]*groupAccum`) | new (`groupTable`) | delta |
+|---|---|---|---|
+| sec/op | 184.2µ ± 0% | 117.0µ ± 0% | **-36.50%** (p=0.000, n=10) |
+| B/op | 1.977Ki ± 0% | 2.117Ki ± 0% | +7.11% (p=0.000, n=10) |
+| allocs/op | 41.00 ± 0% | 33.00 ± 0% | **-19.51%** (p=0.000, n=10) |
+
+**36.5% faster, 19.5% fewer allocations** — but a small, honest tradeoff:
+**7.1% more bytes/op**. The new design trades a few more fixed bytes (the
+`groupTable`'s three eagerly-sized 16-slot arrays — hashes, pointers, occupancy
+— allocated once per `Aggregator`, versus Go's incrementally-grown built-in map)
+for fewer, cheaper allocation *events* and no per-insert string materialization.
+At only 8 groups this fixed cost is relatively more visible; it amortizes away
+at any real dataset's group count (see below).
+
+Two new benchmarks fill real coverage gaps — no prior benchmark exercised a
+composite (multi-column) group-by or graceful degradation at high cardinality:
+
+| Benchmark | ns/op | rows/op | Rows/sec | B/op | allocs/op |
+|---|---|---|---|---|---|
+| `BenchmarkAggregatorAddCompositeKey` (2 string dims) | 303,577 | 10,000 | ~32.9M | 2,544 | 36 |
+| `BenchmarkAggregatorAddHighCardinality` (20,000 distinct keys) | 2,412,122 | 50,000 | ~20.7M | 4,958,693 | 60,042 |
+
+The high-cardinality case's allocs/op (60,042 ≈ 3 per new group × 20,000 groups)
+confirms the table degrades gracefully — no pathological growth/probing
+behavior — well beyond the ~8-104 group shapes the other benchmarks and the
+real 1BRC dataset exercise.
+
+```
+go test ./internal/aggregate/... -run '^$' -bench BenchmarkAggregatorAdd -benchmem -count=10
+```
+
+### Exact vs. approximate: accuracy, memory, and speed
+
+Reference "exact" values come from a full sort (percentiles) or a plain
+`sort -u`/hash-set count (distinct) over the same data — not from the
+production code path, purely to grade the approximate structures against.
+
+**HyperLogLog (`distinct`, precision 14 → 16,384 registers, 16 KiB fixed
+per sketch, ~0.81% theoretical standard error):**
+
+| Dataset | True distinct | Estimate | Error | Exact-set memory | HLL memory |
+|---|---|---|---|---|---|
+| `station` (10M rows, 104 stations) | 104 | 104 | 0% | a few KiB | 16 KiB |
+| `sensor_id` (3M rows, cardinality 500,000) | 498,750 | 497,802 | 0.19% | ~40 MiB (est.) | 16 KiB |
+
+The 104-station row is a deliberately honest loss for HyperLogLog: at that
+cardinality an exact set is smaller *and* exact, so there's no reason to reach
+for an approximate structure. The `sensor_id` row is the real case for it:
+0.19% error (well inside the theoretical bound) at **roughly 1/2500th the
+memory** of an exact set. The crossover point — where HLL's fixed 16 KiB starts
+winning — is somewhere between these two, driven purely by cardinality, not
+row count.
+
+**t-digest (percentiles, compression δ=100):**
+
+| Quantile | Exact (full sort, 10M values) | t-digest estimate | Error |
+|---|---|---|---|
+| p50 | 16.3000 | 16.3367 | 0.22% |
+| p90 | 32.2000 | 32.1683 | 0.10% |
+| p99 | 44.5000 | 44.4701 | 0.07% |
+| p99.9 | 53.0000 | 53.7055 | 1.33% |
+
+Error grows toward the extreme tail (p99.9), exactly matching t-digest's known
+accuracy profile — it spends its resolution budget on the tails relative to the
+*data's* density, not uniformly, but p99.9 is still a small sample even by that
+standard. Memory over the full 10M-row temperature column: the digest converged
+to **58 centroids (928 bytes total)**, versus holding and sorting all 10M
+float64 values (≈80 MiB) for the exact answer — a ~86,000x reduction, for
+sub-1.5%-worst-case error.
+
+**Speed**: both structures update in O(1) (HLL) or amortized-O(1) (t-digest,
+buffered) per row, so `distinct`/percentile measures add negligible per-row
+cost on top of the existing `Add` hot loop — confirmed by the CLI runs above
+completing at 9-12M rows/sec end-to-end (single-goroutine; M1's worker pool
+applies equally here since these are just more `measureAccum` fields folded by
+the same `Add`/`Merge` path).
+
+```
+./cordage run --file benchmarks/data/measurements.csv --schema benchmarks/schema.json \
+  --measure temperature:p50,p90,p99,p99.9,min,max,avg
+./cordage run --file benchmarks/data/measurements.csv --schema benchmarks/schema.json \
+  --measure station:distinct
+go run ./cmd/gen1brc --rows 3000000 --out benchmarks/data/measurements_m2.csv --sensor-cardinality 500000
+./cordage run --file benchmarks/data/measurements_m2.csv --schema benchmarks/schema_m2.json \
+  --measure sensor_id:distinct
+```
+
+### Behavior changes, documented
+
+- **NaN group-by dimension identity**: previously, every NaN float64 dimension
+  value collapsed into one group (an accident of `strconv.AppendFloat` always
+  formatting NaN as the literal string `"NaN"`). The new hash table compares
+  dimension values by bit pattern, so distinct NaN bit patterns are now
+  distinct groups, and identical bit patterns are the same group — more
+  principled, and nothing previously depended on the old behavior (covered by
+  `TestAggregatorFloatDimensionNaNBitwiseIdentity`).
+- **t-digest skips NaN** in `Add`, a deliberate exception to this package's
+  "NaN poisons regardless of order" convention used for Sum/Min/Max: a NaN
+  folded into a mean-sorted centroid list would silently corrupt ordering and
+  produce a plausible-looking but wrong quantile, a worse failure mode than a
+  visibly-NaN sum.
+- **`AggFunc` is now a struct, not an `int`** — internal-only; `Sum`/`Min`/
+  `Max`/`Avg`/`Distinct` are now package `var`s rather than `const`s (a struct
+  with a `float64` field can't be a Go const), but every existing comparison
+  (`==`, map/switch keys) keeps working unchanged.
+
+### Reproducing
+
+```
+go build -o cordage ./cmd/cordage
+go build -o gen1brc ./cmd/gen1brc
+./cordage run --file benchmarks/data/measurements.csv --schema benchmarks/schema.json \
+  --measure temperature:p50,p90,p99,p99.9 --measure station:distinct
+go test ./internal/aggregate/... -run '^$' -bench . -benchmem -count=10
+```

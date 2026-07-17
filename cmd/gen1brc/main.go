@@ -21,15 +21,16 @@ func main() {
 	out := flag.String("out", "benchmarks/data/measurements.csv", "output file path")
 	seed := flag.Uint64("seed", 42, "PRNG seed, for reproducible datasets")
 	stddev := flag.Float64("stddev", 10, "standard deviation of each station's temperature distribution")
+	sensorCardinality := flag.Int64("sensor-cardinality", 0, "if > 0, append a third column, sensor-<n> with n in [0,cardinality), for count-distinct benchmarking (0 = column omitted, preserving the M0/M1 2-column dataset)")
 	flag.Parse()
 
-	if err := run(*rows, *out, *seed, *stddev); err != nil {
+	if err := run(*rows, *out, *seed, *stddev, *sensorCardinality); err != nil {
 		fmt.Fprintf(os.Stderr, "gen1brc: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run(rows int64, out string, seed uint64, stddev float64) error {
+func run(rows int64, out string, seed uint64, stddev float64, sensorCardinality int64) error {
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
 	}
@@ -52,6 +53,11 @@ func run(rows int64, out string, seed uint64, stddev float64) error {
 		line = append(line, st.name...)
 		line = append(line, ';')
 		line = strconv.AppendFloat(line, temp, 'f', 1, 64)
+		if sensorCardinality > 0 {
+			line = append(line, ';')
+			line = append(line, "sensor-"...)
+			line = strconv.AppendInt(line, rng.Int64N(sensorCardinality), 10)
+		}
 		line = append(line, '\n')
 		if _, err := w.Write(line); err != nil {
 			return fmt.Errorf("write row %d: %w", i, err)

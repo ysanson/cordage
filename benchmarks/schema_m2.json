@@ -1,0 +1,9 @@
+{
+  "delimiter": ";",
+  "hasHeader": false,
+  "columns": [
+    {"name": "station", "type": 0, "kind": 0},
+    {"name": "temperature", "type": 2, "kind": 1},
+    {"name": "sensor_id", "type": 0, "kind": 1}
+  ]
+}

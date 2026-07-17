@@ -3,7 +3,6 @@ package aggregate
 import (
 	"encoding/binary"
 	"math"
-	"strconv"
 
 	"github.com/ysanson/cordage/internal/ingest"
 )
@@ -20,7 +19,7 @@ import (
 // depending on whether the NaN arrived first or later in the batch. Sum
 // poisons to NaN through plain float addition — no special-casing needed.
 type measureAccum struct {
-	colType    ingest.ColumnType // TypeInt64 or TypeFloat64
+	colType    ingest.ColumnType // TypeInt64 or TypeFloat64 (or TypeString, for a Distinct-only measure)
 	sumI64     int64
 	minI64     int64
 	maxI64     int64
@@ -28,10 +27,30 @@ type measureAccum struct {
 	minF64     float64
 	maxF64     float64
 	haveMinMax bool
+	distinct   *hyperLogLog // non-nil only if this measure requested Distinct
+	digest     *tdigest     // non-nil only if this measure requested a percentile
 }
 
-func newMeasureAccum(colType ingest.ColumnType) measureAccum {
-	return measureAccum{colType: colType}
+// measureWants records which of a measure's optional structures a
+// MeasureSpec's Funcs actually need, computed once in Aggregator.New —
+// not touched per row — so newMeasureAccum only allocates a HyperLogLog
+// sketch or t-digest when that specific measure actually requested
+// Distinct or a percentile, rather than paying that cost for every group
+// regardless of what was asked for.
+type measureWants struct {
+	Distinct   bool
+	Percentile bool
+}
+
+func newMeasureAccum(colType ingest.ColumnType, wants measureWants) measureAccum {
+	m := measureAccum{colType: colType}
+	if wants.Distinct {
+		m.distinct = newHyperLogLog()
+	}
+	if wants.Percentile {
+		m.digest = newTDigest()
+	}
+	return m
 }
 
 func (m *measureAccum) add(v ingest.Value) {
@@ -41,23 +60,34 @@ func (m *measureAccum) add(v ingest.Value) {
 		if !m.haveMinMax {
 			m.minI64, m.maxI64 = v.I64, v.I64
 			m.haveMinMax = true
-			return
-		}
-		if v.I64 < m.minI64 {
-			m.minI64 = v.I64
-		}
-		if v.I64 > m.maxI64 {
-			m.maxI64 = v.I64
+		} else {
+			if v.I64 < m.minI64 {
+				m.minI64 = v.I64
+			}
+			if v.I64 > m.maxI64 {
+				m.maxI64 = v.I64
+			}
 		}
 	case ingest.TypeFloat64:
 		m.sumF64 += v.F64
 		if !m.haveMinMax {
 			m.minF64, m.maxF64 = v.F64, v.F64
 			m.haveMinMax = true
-			return
+		} else {
+			m.minF64 = math.Min(m.minF64, v.F64)
+			m.maxF64 = math.Max(m.maxF64, v.F64)
 		}
-		m.minF64 = math.Min(m.minF64, v.F64)
-		m.maxF64 = math.Max(m.maxF64, v.F64)
+	}
+
+	if m.distinct != nil {
+		m.distinct.add(hashValue(v))
+	}
+	if m.digest != nil {
+		f := v.F64
+		if m.colType == ingest.TypeInt64 {
+			f = float64(v.I64)
+		}
+		m.digest.Add(f)
 	}
 }
 
@@ -89,6 +119,19 @@ func mergeMeasureAccum(a, b measureAccum) measureAccum {
 		out.haveMinMax = true
 		out.minI64, out.maxI64, out.minF64, out.maxF64 = b.minI64, b.maxI64, b.minF64, b.maxF64
 	}
+
+	if a.distinct != nil {
+		out.distinct = mergeHyperLogLog(a.distinct, b.distinct)
+	}
+	if a.digest != nil {
+		// Reuse a.digest's storage rather than allocating a fresh one —
+		// safe because a is a value receiver here (mergeMeasureAccum's
+		// caller, groupAccum.merge, immediately overwrites its own
+		// g.measures[i] with whatever this returns, and other/b must not
+		// be reused after a Merge per Aggregator's existing contract).
+		out.digest = a.digest
+		out.digest.Merge(b.digest)
+	}
 	return out
 }
 
@@ -99,10 +142,10 @@ type groupAccum struct {
 	measures []measureAccum // parallel to AggSpec.Measures
 }
 
-func newGroupAccum(key []ingest.Value, measureTypes []ingest.ColumnType) *groupAccum {
+func newGroupAccum(key []ingest.Value, measureTypes []ingest.ColumnType, wants []measureWants) *groupAccum {
 	measures := make([]measureAccum, len(measureTypes))
 	for i, t := range measureTypes {
-		measures[i] = newMeasureAccum(t)
+		measures[i] = newMeasureAccum(t, wants[i])
 	}
 	return &groupAccum{key: key, measures: measures}
 }
@@ -114,31 +157,28 @@ func (g *groupAccum) merge(other *groupAccum) {
 	}
 }
 
-// encodeGroupKey serializes dims into buf as a sequence of
-// length-prefixed segments (a varint byte count, then the segment's raw
-// bytes), reusing buf's backing array across calls. This is unambiguous
-// regardless of the bytes a dimension value contains — unlike joining
-// values with a separator byte, which a string dimension could contain,
-// silently merging two distinct tuples into one group.
+// encodeGroupKey serializes dims into buf, reusing buf's backing array
+// across calls, for feeding to a hash function (maphash.Bytes) — it is not
+// itself required to be collision-free, since groupTable always verifies a
+// probe hit against the stored dimension values directly (see
+// groupTable.findByDims/dimsEqual). It's kept unambiguous anyway (no two
+// distinct tuples ever encode to the same bytes): string segments are
+// varint length-prefixed with their raw UTF-8 bytes (unlike joining values
+// with a separator byte, which a string could itself contain); numeric
+// segments are their native 8-byte representation with no length prefix,
+// since a position's width is fixed by its column's type, not its value.
 func encodeGroupKey(buf []byte, dims []ingest.Value) []byte {
 	buf = buf[:0]
-	var numBuf [24]byte
 	for _, v := range dims {
-		if v.Type == ingest.TypeString {
+		switch v.Type {
+		case ingest.TypeString:
 			buf = binary.AppendUvarint(buf, uint64(len(v.Str)))
 			buf = append(buf, v.Str...)
-			continue
-		}
-
-		var seg []byte
-		switch v.Type {
 		case ingest.TypeInt64:
-			seg = strconv.AppendInt(numBuf[:0], v.I64, 10)
+			buf = binary.LittleEndian.AppendUint64(buf, uint64(v.I64))
 		case ingest.TypeFloat64:
-			seg = strconv.AppendFloat(numBuf[:0], v.F64, 'g', -1, 64)
+			buf = binary.LittleEndian.AppendUint64(buf, math.Float64bits(v.F64))
 		}
-		buf = binary.AppendUvarint(buf, uint64(len(seg)))
-		buf = append(buf, seg...)
 	}
 	return buf
 }

@@ -2,6 +2,7 @@ package aggregate
 
 import (
 	"cmp"
+	"math"
 	"sort"
 
 	"github.com/ysanson/cordage/internal/ingest"
@@ -28,10 +29,11 @@ type GroupResult struct {
 //
 // Value's type depends on Func: Sum/Min/Max preserve the source column's
 // native type (TypeInt64 or TypeFloat64) — exact for int64, avoiding
-// float64's 53-bit-mantissa precision loss on large sums/values. Avg is
-// always TypeFloat64, regardless of the source column's type, since an
-// average is definitionally a ratio. A caller switching on Func needs to
-// know this before reading Value.
+// float64's 53-bit-mantissa precision loss on large sums/values. Avg and
+// Percentile are always TypeFloat64 (an average or a quantile is
+// definitionally a ratio/estimate, regardless of the source column's
+// type); Distinct is always TypeInt64 (an estimated count). A caller
+// switching on Func needs to know this before reading Value.
 type MeasureResult struct {
 	Column string
 	Func   AggFunc
@@ -48,25 +50,29 @@ func measureResultValue(m measureAccum, count int64, fn AggFunc) ingest.Value {
 		return ingest.Value{Type: ingest.TypeFloat64, F64: m.sumF64}
 	}
 
-	switch fn {
-	case Sum:
+	switch fn.kind {
+	case kindSum:
 		return nativeSum()
-	case Min:
+	case kindMin:
 		if m.colType == ingest.TypeInt64 {
 			return ingest.Value{Type: ingest.TypeInt64, I64: m.minI64}
 		}
 		return ingest.Value{Type: ingest.TypeFloat64, F64: m.minF64}
-	case Max:
+	case kindMax:
 		if m.colType == ingest.TypeInt64 {
 			return ingest.Value{Type: ingest.TypeInt64, I64: m.maxI64}
 		}
 		return ingest.Value{Type: ingest.TypeFloat64, F64: m.maxF64}
-	case Avg:
+	case kindAvg:
 		sum := m.sumF64
 		if m.colType == ingest.TypeInt64 {
 			sum = float64(m.sumI64)
 		}
 		return ingest.Value{Type: ingest.TypeFloat64, F64: sum / float64(count)}
+	case kindDistinct:
+		return ingest.Value{Type: ingest.TypeInt64, I64: int64(math.Round(m.distinct.estimate()))}
+	case kindPercentile:
+		return ingest.Value{Type: ingest.TypeFloat64, F64: m.digest.Quantile(fn.q / 100)}
 	default:
 		return ingest.Value{}
 	}
