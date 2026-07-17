@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func writeTempFile(t *testing.T, contents string) string {
+func writeTempFile(t testing.TB, contents string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "data.csv")
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {

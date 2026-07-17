@@ -9,6 +9,7 @@ import (
 
 var commands = map[string]func(args []string) error{
 	"ingest": runIngest,
+	"run":    runRun,
 }
 
 func main() {
@@ -34,4 +35,5 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: cordage <command> [flags]")
 	fmt.Fprintln(os.Stderr, "commands:")
 	fmt.Fprintln(os.Stderr, "  ingest    read a file or stdin through the ingestion pipeline and report stats")
+	fmt.Fprintln(os.Stderr, "  run       ingest, then group-by/aggregate, and print the result plus throughput stats")
 }
