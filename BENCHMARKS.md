@@ -434,3 +434,102 @@ go build -o gen1brc ./cmd/gen1brc
   --measure temperature:p50,p90,p99,p99.9 --measure station:distinct
 go test ./internal/aggregate/... -run '^$' -bench . -benchmem -count=10
 ```
+
+---
+
+## M3 — Distribution
+
+M0-M2's parallelism was all intra-process (goroutines sharing one
+`*aggregate.Aggregator` pool). M3 crosses a real process boundary: a
+`cordage coordinator` process splits one input file into newline-aligned
+byte-range shards (via the same `ingest.PlanChunks`/`AlignChunks` M1's
+chunked ingestion already uses), dispatches one shard per `cordage worker`
+process over gRPC, and folds each worker's raw accumulator state
+(`aggregate.ExportState`/`MergeState` — Sum/Min/Max/Avg/Count/Distinct,
+all exact and order-independent; Percentile is out of scope for M3's wire
+protocol and rejected up front) back into one result.
+
+Same environment and dataset as M0/M1/M2 (10M rows, 104 stations,
+`benchmarks/data/measurements.csv`). Workers run as real local OS
+processes (`cordage worker --listen 127.0.0.1:PORT`), one per shard,
+dispatched to and merged by one `cordage coordinator` process.
+
+### Correctness: distributed result vs. single-node result
+
+`cordage coordinator` (2 real worker processes) and `cordage run`
+(single-node) were run over the identical file and diffed: **count, min,
+and max matched exactly for all 104 stations**; avg differed only in the
+last few significant digits (max observed difference 5.0e-13), the
+expected floating-point non-associativity of summing the same values in
+a different grouping order — not a bug, and the same phenomenon already
+documented for M1/M2's in-process `Merge` (`TestMergeMatchesSingleAggregator`
+uses a tolerance comparison for exactly this reason). This is also
+exercised as an automated, build-tag-gated test:
+
+```
+go test -tags realprocess ./internal/distribute/... -run TestDistributedRealProcesses -v
+```
+
+This spawns real `cordage worker`/`cordage coordinator` binaries via
+`exec.Command` (not in-process goroutines) — the literal form of the
+milestone's exit criterion. It's gated behind the `realprocess` build tag
+so plain `go test ./...` (the everyday/CI path) never shells out to `go
+build` or spawns OS processes; the fast dev-loop correctness tests
+(`internal/distribute`'s `TestRunDistributedMatchesSingleNode` and
+friends) use in-process loopback gRPC servers instead, and run in the
+default `go test ./...`.
+
+### Scaling: 1, 2, 4, 8 real worker processes vs. throughput
+
+Each row is the mean of 3 consecutive runs, same file and query as every
+prior milestone's table (`--group-by station --measure temperature:min,avg,max`),
+now dispatched across N real `cordage worker` processes on loopback
+instead of N goroutines:
+
+| Workers | Wall time | Rows/sec | Speedup vs M0 | Coordinator peak RSS |
+|---|---|---|---|---|
+| 1 | 0.663 s | 15,127,691 | 0.94x | 16.27 MiB |
+| 2 | 0.340 s | 29,531,362 | 1.84x | 16.91 MiB |
+| 4 | 0.183 s | 55,427,599 | 3.45x | 18.15 MiB |
+| 8 | 0.120 s | 85,139,487 | 5.31x | 20.40 MiB |
+
+("Coordinator peak RSS" is the coordinator process only — it never holds
+row data, just each shard's finalized `GroupState` slices, so it stays
+small and roughly flat; each worker's own memory footprint tracks its
+shard's share of the file, the same "streamed, not accumulated" story
+M0/M1 already established, just now per-process instead of per-goroutine.)
+
+**Near-linear scaling, and past M1's in-process ceiling**: at N=8, real
+worker processes reach **85.1M rows/sec (5.31x M0)** — beyond M1's best
+in-process result (48.7M rows/sec at `chunks=16, workers=16`, 3.03x M0).
+Real OS processes sidestep the single-process constraints M1's section
+already diagnosed (one shared `*os.File`, a GOMAXPROCS-bound scheduler):
+each worker process independently opens the file, reads only its own
+byte range, and runs its own single-goroutine ingest+aggregate loop —
+8 fully independent processes genuinely saturate more of the machine's
+12 logical cores than 16 contending goroutines in one process did. N=1
+(one worker, no real parallelism, plus gRPC/process overhead) lands
+slightly below the M0 baseline (0.94x) — expected: it pays coordination
+cost for zero distribution benefit, the same shape as M1's own
+`--chunks 1` caveat.
+
+### Reproducing
+
+```
+go build -o cordage ./cmd/cordage
+go run ./cmd/gen1brc --rows 10000000 --out benchmarks/data/measurements.csv
+for n in 1 2 4 8; do
+  addrs=""
+  for ((i=0; i<n; i++)); do
+    port=$((19000 + i))
+    ./cordage worker --listen 127.0.0.1:$port &
+    addrs="${addrs:+$addrs,}127.0.0.1:$port"
+  done
+  sleep 0.5
+  /usr/bin/time -l ./cordage coordinator --file benchmarks/data/measurements.csv \
+    --schema benchmarks/schema.json --group-by station \
+    --measure temperature:min,avg,max --workers "$addrs"
+  kill %1 %2 %3 %4 %5 %6 %7 %8 2>/dev/null
+  wait 2>/dev/null
+done
+```

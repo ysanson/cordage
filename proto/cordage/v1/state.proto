@@ -1,0 +1,36 @@
+syntax = "proto3";
+package cordage.v1;
+
+import "cordage/v1/common.proto";
+
+option go_package = "github.com/ysanson/cordage/internal/distproto";
+
+// MeasureState is one measure column's raw, mergeable accumulator
+// state -- the wire form of aggregate.MeasureState. There is
+// deliberately no field for t-digest/percentile state: distributed
+// percentile merging is out of scope for M3 (see FuncKind in
+// spec.proto), so no AggSpec that reaches this message may contain a
+// Percentile measure -- aggregate.ValidateDistributable rejects it
+// before a ShardRequest is ever built or a ShardResult ever produced.
+message MeasureState {
+  ColumnType col_type = 1;
+  int64 sum_i64 = 2;
+  int64 min_i64 = 3;
+  int64 max_i64 = 4;
+  double sum_f64 = 5;
+  double min_f64 = 6;
+  double max_f64 = 7;
+  bool have_min_max = 8;
+  // Empty unless this measure requested Distinct. When present, always
+  // exactly 16384 bytes (1 byte per HyperLogLog register, at
+  // aggregate's fixed precision=14). Register-wise max is exact and
+  // order-independent, so this byte slice round-trips through gRPC
+  // with zero precision loss.
+  bytes hll_registers = 9;
+}
+
+message GroupState {
+  repeated Value key = 1;
+  int64 count = 2;
+  repeated MeasureState measures = 3;
+}

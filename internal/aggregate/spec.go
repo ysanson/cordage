@@ -43,6 +43,69 @@ func Percentile(q float64) AggFunc {
 	return AggFunc{kind: kindPercentile, q: q}
 }
 
+// AggFuncKind is the exported form of AggFunc's internal funcKind, for
+// callers (e.g. internal/distribute's proto conversion) that need to
+// inspect or reconstruct an AggFunc without this package depending on
+// their wire format.
+type AggFuncKind int
+
+const (
+	FuncSum AggFuncKind = iota
+	FuncMin
+	FuncMax
+	FuncAvg
+	FuncDistinct
+	FuncPercentile
+)
+
+// Kind reports which family of function f is.
+func (f AggFunc) Kind() AggFuncKind { return AggFuncKind(f.kind) }
+
+// Quantile reports f's requested quantile (0-100 scale). Meaningful only
+// when f.Kind() == FuncPercentile.
+func (f AggFunc) Quantile() float64 { return f.q }
+
+// AggFuncFromKind reconstructs an AggFunc from its exported Kind and (for
+// FuncPercentile) quantile -- the inverse of Kind()/Quantile(), for
+// decoding an AggFunc back out of a wire representation.
+func AggFuncFromKind(kind AggFuncKind, quantile float64) (AggFunc, error) {
+	switch kind {
+	case FuncSum:
+		return Sum, nil
+	case FuncMin:
+		return Min, nil
+	case FuncMax:
+		return Max, nil
+	case FuncAvg:
+		return Avg, nil
+	case FuncDistinct:
+		return Distinct, nil
+	case FuncPercentile:
+		return Percentile(quantile), nil
+	default:
+		return AggFunc{}, fmt.Errorf("aggregate: unknown AggFuncKind %d", int(kind))
+	}
+}
+
+// ValidateDistributable reports an error if spec requests any Percentile
+// measure. Distributed (gRPC) execution cannot merge t-digest state
+// across processes in M3 -- GroupState/MeasureState have no wire
+// representation for it. Callers distributing an AggSpec (the
+// coordinator and each WorkerServer alike) should call this before
+// dispatching or executing any shard, so a Percentile request fails fast
+// with a clear error instead of silently returning a wrong or missing
+// value.
+func ValidateDistributable(spec AggSpec) error {
+	for _, ms := range spec.Measures {
+		for _, fn := range ms.Funcs {
+			if fn.Kind() == FuncPercentile {
+				return fmt.Errorf("aggregate: measure %q requests %s, which distributed mode does not support; run single-node instead", ms.Column, fn)
+			}
+		}
+	}
+	return nil
+}
+
 func (f AggFunc) String() string {
 	switch f.kind {
 	case kindSum:

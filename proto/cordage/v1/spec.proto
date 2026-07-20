@@ -1,0 +1,36 @@
+syntax = "proto3";
+package cordage.v1;
+option go_package = "github.com/ysanson/cordage/internal/distproto";
+
+// FuncKind mirrors aggregate.AggFuncKind. FUNC_KIND_PERCENTILE is
+// included, deliberately, for forward/wire compatibility -- a future
+// milestone that adds distributed percentile merging doesn't need a
+// breaking field renumber. But M3 rejects it outright: both the
+// coordinator and WorkerServer call aggregate.ValidateDistributable
+// before doing any work, so a Percentile measure fails fast with a clear
+// error instead of silently under-aggregating (t-digest/centroid state
+// has no wire representation in M3 -- see MeasureState in state.proto).
+enum FuncKind {
+  FUNC_KIND_UNSPECIFIED = 0;
+  FUNC_KIND_SUM = 1;
+  FUNC_KIND_MIN = 2;
+  FUNC_KIND_MAX = 3;
+  FUNC_KIND_AVG = 4;
+  FUNC_KIND_DISTINCT = 5;
+  FUNC_KIND_PERCENTILE = 6; // present for schema evolution; always rejected in M3
+}
+
+message AggFunc {
+  FuncKind kind = 1;
+  double quantile = 2; // meaningful only when kind == FUNC_KIND_PERCENTILE
+}
+
+message MeasureSpec {
+  string column = 1;
+  repeated AggFunc funcs = 2;
+}
+
+message AggSpec {
+  repeated string group_by = 1;
+  repeated MeasureSpec measures = 2;
+}

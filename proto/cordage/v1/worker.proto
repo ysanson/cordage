@@ -1,0 +1,42 @@
+syntax = "proto3";
+package cordage.v1;
+
+import "cordage/v1/common.proto";
+import "cordage/v1/spec.proto";
+import "cordage/v1/state.proto";
+
+option go_package = "github.com/ysanson/cordage/internal/distproto";
+
+// ShardRequest assigns one worker a single, already newline-aligned byte
+// range of a file the worker must be able to open *independently* -- a
+// shared filesystem path/mount. M3 does not ship file bytes over the
+// wire (that's a fast-follow, e.g. for a cross-host deployment); the
+// milestone's own exit criteria (a local multi-process test on one
+// machine) only require a shared local path, which this satisfies
+// directly.
+message ShardRequest {
+  Schema schema = 1;
+  AggSpec spec = 2;
+  string file_path = 3;
+  int64 offset = 4;
+  int64 length = 5;
+  string on_error = 6; // "skip" or "fail", mirrors ingest.ErrorPolicy
+  int32 batch_size = 7; // 0 = ingest package default
+  int32 buffer_size = 8; // 0 = ingest package default
+}
+
+// ShardResult is one shard's raw, mergeable partial result. Its size is
+// O(#groups), not O(#rows) -- a shard's row count can be arbitrarily
+// large without inflating the response (though a high-cardinality
+// GROUP BY combined with many Distinct measures can still grow this
+// message past gRPC's default max message size; not a concern at this
+// milestone's benchmark dataset scale).
+message ShardResult {
+  repeated GroupState groups = 1;
+  int64 rows = 2;
+  int64 skipped = 3;
+}
+
+service Worker {
+  rpc RunShard(ShardRequest) returns (ShardResult);
+}

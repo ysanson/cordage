@@ -1,0 +1,54 @@
+syntax = "proto3";
+package cordage.v1;
+option go_package = "github.com/ysanson/cordage/internal/distproto";
+
+// ColumnType mirrors ingest.ColumnType. Zero is reserved as an explicit
+// "unspecified" sentinel (proto style), so it is intentionally NOT
+// numerically aligned with ingest.ColumnType's TypeString == 0 —
+// internal/distribute's conversion helpers translate between the two by
+// an explicit switch, never a numeric cast, precisely so a future
+// reordering of either enum can't silently corrupt the other.
+enum ColumnType {
+  COLUMN_TYPE_UNSPECIFIED = 0;
+  COLUMN_TYPE_STRING = 1;
+  COLUMN_TYPE_INT64 = 2;
+  COLUMN_TYPE_FLOAT64 = 3;
+}
+
+enum ColumnKind {
+  COLUMN_KIND_UNSPECIFIED = 0;
+  COLUMN_KIND_DIMENSION = 1;
+  COLUMN_KIND_MEASURE = 2;
+  COLUMN_KIND_IGNORE = 3;
+}
+
+message ColumnSchema {
+  string name = 1;
+  ColumnType type = 2;
+  ColumnKind kind = 3;
+}
+
+// Schema mirrors ingest.Schema. Columns is always fully populated on the
+// wire: the coordinator only ever ships a schema already resolved via
+// ingest.LoadSchemaFile, so there is no header-inference path over gRPC.
+// has_header is set per-shard by the coordinator (true only for the
+// shard covering byte offset 0, and only if the original schema declares
+// a header) -- see internal/distribute.PlanShards.
+message Schema {
+  uint32 delimiter = 1; // a single byte value (0-255); 0 = ingest's default ','
+  bool has_header = 2;
+  bool quote_aware = 3;
+  repeated ColumnSchema columns = 4;
+}
+
+// Value mirrors ingest.Value. Exactly one oneof case is set, and *which*
+// one is set is itself the type tag -- a oneof's wire encoding always
+// preserves which field was written, even the zero value ("" or 0), so
+// no separate ColumnType field is needed here (unlike ColumnSchema).
+message Value {
+  oneof kind {
+    string str = 1;
+    int64 i64 = 2;
+    double f64 = 3;
+  }
+}

@@ -59,15 +59,15 @@ A distributed, in-memory analytics engine written in Go. Ingests large tabular d
 - **Exit criteria:** documented speedup vs M0, with an explanation of where the ceiling is (I/O-bound vs CPU-bound)
 
 ### M2 — Algorithmic depth
-- [ ] Swap naive `map[string]struct` grouping for a faster hash strategy (custom hashing, avoid string allocs where possible)
-- [ ] Add approximate aggregates: HyperLogLog for count-distinct, t-digest (or similar) for percentiles — this is your strongest "algorithms" showcase item
-- [ ] Benchmark exact vs approximate: accuracy/memory/speed tradeoff table in the README
+- [X] Swap naive `map[string]struct` grouping for a faster hash strategy (custom hashing, avoid string allocs where possible)
+- [X] Add approximate aggregates: HyperLogLog for count-distinct, t-digest (or similar) for percentiles — this is your strongest "algorithms" showcase item
+- [X] Benchmark exact vs approximate: accuracy/memory/speed tradeoff table in the README
 - **Exit criteria:** a working percentile/distinct-count query path, with a tradeoff writeup
 
 ### M3 — Distribution
-- [ ] Define the gRPC service contract: coordinator ↔ worker (shard assignment, partial result return)
-- [ ] Coordinator splits input (by file, by byte range, or by pre-partitioned files) across N worker processes
-- [ ] Local multi-process test: spin up N worker binaries + 1 coordinator on one machine, confirm correctness matches M2's single-node result exactly
+- [X] Define the gRPC service contract: coordinator ↔ worker (shard assignment, partial result return)
+- [X] Coordinator splits input (by file, by byte range, or by pre-partitioned files) across N worker processes
+- [X] Local multi-process test: spin up N worker binaries + 1 coordinator on one machine, confirm correctness matches M2's single-node result exactly
 - **Exit criteria:** distributed result identical to single-node result, plus a scaling chart (1, 2, 4, 8 workers vs throughput)
 
 ### M4 — Query interface
