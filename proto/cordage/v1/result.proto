@@ -1,0 +1,37 @@
+syntax = "proto3";
+package cordage.v1;
+
+import "cordage/v1/common.proto";
+import "cordage/v1/spec.proto";
+
+option go_package = "github.com/ysanson/cordage/internal/distproto";
+
+// MeasureResult is one requested aggregate function's finalized value for
+// one measure column within one group -- the wire form of
+// aggregate.MeasureResult. Unlike MeasureState (state.proto), this is the
+// *finalized*, printable output (sums already divided into averages, HLL
+// registers already resolved into an estimated count, etc.), never
+// merged further.
+message MeasureResult {
+  string column = 1;
+  AggFunc func = 2;
+  Value value = 3;
+}
+
+// GroupResult is one group's key and finalized measures -- the wire form
+// of aggregate.GroupResult.
+message GroupResult {
+  repeated Value key = 1;
+  int64 count = 2;
+  repeated MeasureResult measures = 3;
+}
+
+// Result is one Aggregator.Result() call's full output -- the wire form
+// of aggregate.Result. Unlike ShardResult (worker.proto), which is a raw
+// partial/mergeable shard state, every GroupResult here is already fully
+// finalized and sorted -- exactly the form `cordage query` prints
+// directly and never merges further.
+message Result {
+  repeated string group_by_columns = 1;
+  repeated GroupResult groups = 2;
+}

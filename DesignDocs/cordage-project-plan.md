@@ -71,8 +71,8 @@ A distributed, in-memory analytics engine written in Go. Ingests large tabular d
 - **Exit criteria:** distributed result identical to single-node result, plus a scaling chart (1, 2, 4, 8 workers vs throughput)
 
 ### M4 — Query interface
-- [ ] Small fixed query grammar or JSON query spec (defer full SQL parsing — note this explicitly as a stretch goal in the README, don't let it block M5)
-- [ ] `cordage query` CLI subcommand hits a running coordinator over gRPC
+- [X] Small fixed query grammar or JSON query spec (defer full SQL parsing — note this explicitly as a stretch goal in the README, don't let it block M5)
+- [X] `cordage query` CLI subcommand hits a running coordinator over gRPC
 - **Exit criteria:** can run `cordage query --grpc localhost:9000 "SELECT city, AVG(temp) GROUP BY city"` (or your JSON equivalent) end-to-end
 
 ### M5 — Cloud deployment

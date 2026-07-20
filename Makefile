@@ -10,4 +10,5 @@ proto:
 		--go_out=. --go_opt=module=github.com/ysanson/cordage \
 		--go-grpc_out=. --go-grpc_opt=module=github.com/ysanson/cordage \
 		proto/cordage/v1/common.proto proto/cordage/v1/spec.proto \
-		proto/cordage/v1/state.proto proto/cordage/v1/worker.proto
+		proto/cordage/v1/state.proto proto/cordage/v1/worker.proto \
+		proto/cordage/v1/result.proto proto/cordage/v1/coordinator.proto

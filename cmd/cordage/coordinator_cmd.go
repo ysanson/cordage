@@ -3,12 +3,16 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
 	"flag"
 
+	"google.golang.org/grpc"
+
 	"github.com/ysanson/cordage/internal/aggregate"
+	"github.com/ysanson/cordage/internal/distproto"
 	"github.com/ysanson/cordage/internal/distribute"
 	"github.com/ysanson/cordage/internal/ingest"
 )
@@ -22,6 +26,7 @@ func runCoordinator(args []string) error {
 	bufferSize := fs.Int("buffer-size", 0, "per-chunk read buffer size in bytes (0 = package default)")
 	groupBy := fs.String("group-by", "", "comma-separated group-by column names (empty = one global group)")
 	workerAddrs := fs.String("workers", "", "comma-separated worker addresses, host:port,host:port,... (required)")
+	listen := fs.String("listen", "", "if set, run as a long-lived query server on this address (host:port) instead of one-shot mode; mutually exclusive with -group-by/-measure")
 	var measures measureFlags
 	fs.Var(&measures, "measure", `measure spec "column:func1,func2,..." (funcs: sum,min,max,avg,distinct; percentile funcs are not supported in distributed mode); repeatable`)
 	if err := fs.Parse(args); err != nil {
@@ -61,6 +66,20 @@ func runCoordinator(args []string) error {
 		return err
 	}
 
+	if *listen != "" {
+		if *groupBy != "" || len(measures) > 0 {
+			return fmt.Errorf("coordinator: -listen cannot be combined with -group-by/-measure; each query supplies its own spec")
+		}
+		return runCoordinatorServe(*listen, distribute.CoordinatorConfig{
+			Schema:      schema,
+			FilePath:    *filePath,
+			WorkerAddrs: strings.Split(*workerAddrs, ","),
+			OnError:     onError,
+			BatchSize:   *batchSize,
+			BufferSize:  *bufferSize,
+		})
+	}
+
 	addrs := strings.Split(*workerAddrs, ",")
 	shards, err := distribute.PlanShards(*filePath, addrs, schema)
 	if err != nil {
@@ -86,4 +105,18 @@ func runCoordinator(args []string) error {
 	fmt.Printf("rows=%d skipped=%d elapsed=%s rows/sec=%.0f shards=%d\n",
 		rows, skipped, elapsed, float64(rows)/elapsed.Seconds(), len(shards))
 	return nil
+}
+
+// runCoordinatorServe starts a long-lived gRPC server hosting only the
+// Coordinator service (workers stay separate `cordage worker` processes,
+// unchanged) and blocks forever, answering queries against cfg.
+func runCoordinatorServe(listen string, cfg distribute.CoordinatorConfig) error {
+	lis, err := net.Listen("tcp", listen)
+	if err != nil {
+		return err
+	}
+	srv := grpc.NewServer()
+	distproto.RegisterCoordinatorServer(srv, distribute.NewCoordinatorServer(cfg))
+	fmt.Printf("cordage coordinator listening on %s (file=%s workers=%d)\n", lis.Addr(), cfg.FilePath, len(cfg.WorkerAddrs))
+	return srv.Serve(lis)
 }

@@ -1,0 +1,28 @@
+syntax = "proto3";
+package cordage.v1;
+
+import "cordage/v1/spec.proto";
+import "cordage/v1/result.proto";
+
+option go_package = "github.com/ysanson/cordage/internal/distproto";
+
+// QueryRequest carries only the AggSpec parsed from the query string.
+// Everything else (schema, file path, worker addresses, on-error policy,
+// batch/buffer size) is the Coordinator's own static, load-once-at-startup
+// config -- M4 queries one already-configured dataset, not a per-query
+// choice of file/workers.
+message QueryRequest {
+  AggSpec spec = 1;
+}
+
+// Coordinator is the long-lived query-serving counterpart to Worker
+// (worker.proto): where Worker executes one shard and returns raw
+// mergeable state, Coordinator plans and dispatches every shard for one
+// query and returns the finalized, merged, sorted Result directly -- no
+// wrapper message, matching Worker's own ShardResult-direct-return
+// convention. Per-query row/skipped-row counts are intentionally not
+// returned to the client -- those are operationally interesting to
+// whoever runs the coordinator process, not to a remote query client.
+service Coordinator {
+  rpc Query(QueryRequest) returns (Result);
+}

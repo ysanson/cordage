@@ -158,14 +158,21 @@ func TestDistributedRealProcesses(t *testing.T) {
 		t.Fatalf("run: %v\n%s", err, runOut)
 	}
 
-	distStats := parseRunOutput(t, string(coordOut))
-	singleStats := parseRunOutput(t, string(runOut))
+	compareStationStats(t, parseRunOutput(t, string(coordOut)), parseRunOutput(t, string(runOut)))
+}
 
-	if len(distStats) != len(singleStats) {
-		t.Fatalf("got %d stations distributed, %d single-node", len(distStats), len(singleStats))
+// compareStationStats compares a distributed run's per-station stats
+// against a single-node reference: count/min/max must match exactly,
+// avg only within floating-point tolerance (summing the same values in a
+// different grouping order isn't bit-exact -- see TestDistributedRealProcesses's
+// doc comment).
+func compareStationStats(t *testing.T, dist, single map[string]stationStat) {
+	t.Helper()
+	if len(dist) != len(single) {
+		t.Fatalf("got %d stations distributed, %d single-node", len(dist), len(single))
 	}
-	for station, d := range distStats {
-		s, ok := singleStats[station]
+	for station, d := range dist {
+		s, ok := single[station]
 		if !ok {
 			t.Errorf("station %q present in distributed output, missing from single-node", station)
 			continue
@@ -183,4 +190,68 @@ func TestDistributedRealProcesses(t *testing.T) {
 			t.Errorf("%s: avg = %v, want %v (within tolerance)", station, d.avg, s.avg)
 		}
 	}
+}
+
+func startCoordinatorListenProcess(t *testing.T, bin, addr, dataPath, schemaPath, workerAddrsCSV string) {
+	t.Helper()
+	cmd := exec.Command(bin, "coordinator",
+		"--listen", addr,
+		"--file", dataPath,
+		"--schema", schemaPath,
+		"--workers", workerAddrsCSV,
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start coordinator: %v", err)
+	}
+	t.Cleanup(func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	})
+	waitForPort(t, addr, 5*time.Second)
+}
+
+// TestQueryRealProcess is M4's own literal exit criterion: a real
+// `cordage coordinator --listen` process, real `cordage worker`
+// processes, and a real `cordage query` process, all talking over real
+// gRPC -- compared against a real single-node `cordage run` process over
+// the same file. Requests MIN/AVG/MAX (not just AVG) so the query
+// path's stdout matches statLineRe/parseRunOutput's existing regex, with
+// no new parsing code needed.
+//
+//	go test -tags realprocess ./internal/distribute/... -run TestQueryRealProcess -v
+func TestQueryRealProcess(t *testing.T) {
+	bin := buildCordageBinary(t)
+	dir := t.TempDir()
+	dataPath, _ := writeTestCSV(t, 20000)
+	schemaPath := writeRealProcessSchema(t, dir)
+
+	const numWorkers = 3
+	workerAddrs := make([]string, numWorkers)
+	for i := range workerAddrs {
+		workerAddrs[i] = fmt.Sprintf("127.0.0.1:%d", freePort(t))
+	}
+	for _, addr := range workerAddrs {
+		startWorkerProcess(t, bin, addr)
+	}
+
+	coordAddr := fmt.Sprintf("127.0.0.1:%d", freePort(t))
+	startCoordinatorListenProcess(t, bin, coordAddr, dataPath, schemaPath, strings.Join(workerAddrs, ","))
+
+	queryOut, err := exec.Command(bin, "query",
+		"--grpc", coordAddr,
+		"SELECT station, MIN(temperature), AVG(temperature), MAX(temperature) GROUP BY station",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("query: %v\n%s", err, queryOut)
+	}
+
+	runOut, err := exec.Command(bin, "run",
+		"--file", dataPath, "--schema", schemaPath,
+		"--group-by", "station", "--measure", "temperature:min,avg,max",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, runOut)
+	}
+
+	compareStationStats(t, parseRunOutput(t, string(queryOut)), parseRunOutput(t, string(runOut)))
 }

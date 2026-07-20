@@ -163,7 +163,7 @@ func (m *measureFlags) Set(s string) error {
 	funcNames := strings.Split(funcsPart, ",")
 	funcs := make([]aggregate.AggFunc, 0, len(funcNames))
 	for _, name := range funcNames {
-		f, err := parseAggFunc(name)
+		f, err := aggregate.ParseAggFunc(name)
 		if err != nil {
 			return err
 		}
@@ -171,28 +171,4 @@ func (m *measureFlags) Set(s string) error {
 	}
 	*m = append(*m, aggregate.MeasureSpec{Column: column, Funcs: funcs})
 	return nil
-}
-
-func parseAggFunc(name string) (aggregate.AggFunc, error) {
-	lower := strings.ToLower(strings.TrimSpace(name))
-	switch lower {
-	case "sum":
-		return aggregate.Sum, nil
-	case "min":
-		return aggregate.Min, nil
-	case "max":
-		return aggregate.Max, nil
-	case "avg":
-		return aggregate.Avg, nil
-	case "distinct":
-		return aggregate.Distinct, nil
-	}
-	if rest, ok := strings.CutPrefix(lower, "p"); ok {
-		q, err := strconv.ParseFloat(rest, 64)
-		if err != nil || q <= 0 || q >= 100 {
-			return aggregate.AggFunc{}, fmt.Errorf("invalid percentile %q (want e.g. p50, p99, p99.9)", name)
-		}
-		return aggregate.Percentile(q), nil
-	}
-	return aggregate.AggFunc{}, fmt.Errorf("unknown aggregate function %q (want sum, min, max, avg, distinct, or p<0-100>)", name)
 }

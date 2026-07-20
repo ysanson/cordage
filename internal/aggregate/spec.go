@@ -5,6 +5,7 @@ package aggregate
 import (
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // funcKind is the family of aggregate function an AggFunc represents.
@@ -104,6 +105,36 @@ func ValidateDistributable(spec AggSpec) error {
 		}
 	}
 	return nil
+}
+
+// ParseAggFunc parses an aggregate-function name as used by the CLI's
+// -measure flag and internal/query's grammar: sum, min, max, avg,
+// distinct (case-insensitive), or a percentile prefix "p<0-100>" (e.g.
+// "p50", "p99.9"). This is the single implementation shared by
+// cmd/cordage's -measure flag parsing and internal/query's FUNC(column)
+// select-item parsing, so the two can't drift apart.
+func ParseAggFunc(name string) (AggFunc, error) {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	switch lower {
+	case "sum":
+		return Sum, nil
+	case "min":
+		return Min, nil
+	case "max":
+		return Max, nil
+	case "avg":
+		return Avg, nil
+	case "distinct":
+		return Distinct, nil
+	}
+	if rest, ok := strings.CutPrefix(lower, "p"); ok {
+		q, err := strconv.ParseFloat(rest, 64)
+		if err != nil || q <= 0 || q >= 100 {
+			return AggFunc{}, fmt.Errorf("invalid percentile %q (want e.g. p50, p99, p99.9)", name)
+		}
+		return Percentile(q), nil
+	}
+	return AggFunc{}, fmt.Errorf("unknown aggregate function %q (want sum, min, max, avg, distinct, or p<0-100>)", name)
 }
 
 func (f AggFunc) String() string {

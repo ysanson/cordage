@@ -367,3 +367,120 @@ func protoToOnError(s string) (ingest.ErrorPolicy, error) {
 		return 0, fmt.Errorf("distribute: invalid on_error %q (want skip or fail)", s)
 	}
 }
+
+func measureResultToProto(m aggregate.MeasureResult) (*distproto.MeasureResult, error) {
+	pf, err := aggFuncToProto(m.Func)
+	if err != nil {
+		return nil, err
+	}
+	pv, err := valueToProto(m.Value)
+	if err != nil {
+		return nil, err
+	}
+	return &distproto.MeasureResult{Column: m.Column, Func: pf, Value: pv}, nil
+}
+
+func protoToMeasureResult(p *distproto.MeasureResult) (aggregate.MeasureResult, error) {
+	if p == nil {
+		return aggregate.MeasureResult{}, fmt.Errorf("distribute: nil MeasureResult")
+	}
+	f, err := protoToAggFunc(p.GetFunc())
+	if err != nil {
+		return aggregate.MeasureResult{}, err
+	}
+	v, err := protoToValue(p.GetValue())
+	if err != nil {
+		return aggregate.MeasureResult{}, err
+	}
+	return aggregate.MeasureResult{Column: p.GetColumn(), Func: f, Value: v}, nil
+}
+
+func groupResultToProto(g aggregate.GroupResult) (*distproto.GroupResult, error) {
+	key := make([]*distproto.Value, len(g.Key))
+	for i, v := range g.Key {
+		pv, err := valueToProto(v)
+		if err != nil {
+			return nil, err
+		}
+		key[i] = pv
+	}
+	measures := make([]*distproto.MeasureResult, len(g.Measures))
+	for i, m := range g.Measures {
+		pm, err := measureResultToProto(m)
+		if err != nil {
+			return nil, err
+		}
+		measures[i] = pm
+	}
+	return &distproto.GroupResult{Key: key, Count: g.Count, Measures: measures}, nil
+}
+
+func protoToGroupResult(p *distproto.GroupResult) (aggregate.GroupResult, error) {
+	if p == nil {
+		return aggregate.GroupResult{}, fmt.Errorf("distribute: nil GroupResult")
+	}
+	key := make([]ingest.Value, len(p.GetKey()))
+	for i, v := range p.GetKey() {
+		gv, err := protoToValue(v)
+		if err != nil {
+			return aggregate.GroupResult{}, err
+		}
+		key[i] = gv
+	}
+	measures := make([]aggregate.MeasureResult, len(p.GetMeasures()))
+	for i, m := range p.GetMeasures() {
+		gm, err := protoToMeasureResult(m)
+		if err != nil {
+			return aggregate.GroupResult{}, err
+		}
+		measures[i] = gm
+	}
+	return aggregate.GroupResult{Key: key, Count: p.GetCount(), Measures: measures}, nil
+}
+
+// resultToProto/protoToResult: no slice-of variants needed -- a Result is
+// converted exactly once per Query RPC, unlike GroupState which is
+// batched per shard.
+func resultToProto(r *aggregate.Result) (*distproto.Result, error) {
+	if r == nil {
+		return nil, fmt.Errorf("distribute: nil Result")
+	}
+	groups := make([]*distproto.GroupResult, len(r.Groups))
+	for i, g := range r.Groups {
+		pg, err := groupResultToProto(g)
+		if err != nil {
+			return nil, err
+		}
+		groups[i] = pg
+	}
+	return &distproto.Result{
+		GroupByColumns: append([]string(nil), r.GroupByColumns...),
+		Groups:         groups,
+	}, nil
+}
+
+func protoToResult(p *distproto.Result) (*aggregate.Result, error) {
+	if p == nil {
+		return nil, fmt.Errorf("distribute: nil Result")
+	}
+	groups := make([]aggregate.GroupResult, len(p.GetGroups()))
+	for i, g := range p.GetGroups() {
+		gg, err := protoToGroupResult(g)
+		if err != nil {
+			return nil, err
+		}
+		groups[i] = gg
+	}
+	return &aggregate.Result{
+		GroupByColumns: append([]string(nil), p.GetGroupByColumns()...),
+		Groups:         groups,
+	}, nil
+}
+
+// SpecToProto and ResultFromProto are exported for cmd/cordage's query
+// command, which needs to build a QueryRequest from a parsed AggSpec and
+// decode a Coordinator's Result response before printing it -- the same
+// reason PlanShards/RunDistributed are already exported.
+func SpecToProto(s aggregate.AggSpec) (*distproto.AggSpec, error) { return specToProto(s) }
+
+func ResultFromProto(p *distproto.Result) (*aggregate.Result, error) { return protoToResult(p) }

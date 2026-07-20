@@ -12,6 +12,7 @@ var commands = map[string]func(args []string) error{
 	"run":         runRun,
 	"worker":      runWorker,
 	"coordinator": runCoordinator,
+	"query":       runQuery,
 }
 
 func main() {
@@ -39,5 +40,6 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  ingest       read a file or stdin through the ingestion pipeline and report stats")
 	fmt.Fprintln(os.Stderr, "  run          ingest, then group-by/aggregate, and print the result plus throughput stats")
 	fmt.Fprintln(os.Stderr, "  worker       run a gRPC worker server that ingests/aggregates a shard on request")
-	fmt.Fprintln(os.Stderr, "  coordinator  split a file across worker addresses, dispatch shards, merge, and print the result")
+	fmt.Fprintln(os.Stderr, "  coordinator  split a file across worker addresses, dispatch shards, merge, and print the result (or -listen to serve queries)")
+	fmt.Fprintln(os.Stderr, "  query        parse a SELECT ... [GROUP BY ...] query and run it against a long-lived coordinator over gRPC")
 }
