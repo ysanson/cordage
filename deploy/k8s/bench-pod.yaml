@@ -1,0 +1,36 @@
+# Same image/volumes as the coordinator, kept idle so the scaling demo can
+# `kubectl exec` one-shot `cordage coordinator ...` runs into it and get
+# rows/sec output -- Coordinator.Query's RPC deliberately never returns row
+# counts (see coordinator.proto), so the persistent --listen path can't
+# produce the BENCHMARKS.md-style throughput numbers on its own.
+#
+# The base image is distroless/static -- no shell, no `sleep` binary -- so
+# the main process is a harmless idle `cordage worker` (unused by anything)
+# rather than a shell loop; `kubectl exec` still runs /cordage directly
+# without needing a shell in the container.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cordage-bench
+  labels:
+    app: cordage-bench
+spec:
+  containers:
+  - name: cordage-bench
+    image: cordage:local
+    imagePullPolicy: IfNotPresent
+    command: ["/cordage", "worker", "--listen", ":19999"]
+    volumeMounts:
+    - name: dataset
+      mountPath: /data
+      readOnly: true
+    - name: schema
+      mountPath: /config
+  volumes:
+  - name: dataset
+    hostPath:
+      path: /mnt/cordage-data
+      type: Directory
+  - name: schema
+    configMap:
+      name: cordage-schema

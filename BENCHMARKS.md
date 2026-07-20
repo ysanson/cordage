@@ -533,3 +533,119 @@ for n in 1 2 4 8; do
   wait 2>/dev/null
 done
 ```
+
+## M5 — Cloud deployment
+
+M3's coordinator/worker split assumed a shared local filesystem and a
+manually-typed, static `-workers host:port,...` list -- both explicitly
+deferred as "M5's problem." M5 replaces the static list with a
+`distribute.Discoverer` (`internal/distribute/discovery.go`): a `StaticDiscoverer`
+wrapping the existing `-workers` flag, and a new `DNSDiscoverer` that
+resolves a Kubernetes headless Service's DNS name (one A record per ready
+worker pod, no Kubernetes API access needed) fresh before every run. Because
+`CoordinatorServer.Query` already re-planned shards on every RPC
+(`coordinator_server.go`), swapping in `DNSDiscoverer` means a `-listen`
+coordinator picks up a scaled worker Deployment's new replicas without ever
+being redeployed itself.
+
+Shared file access (workers on different pods can't `os.Open()` the same
+local path by default) is solved the minimum-viable way for a demo: a
+single-node `kind` cluster with a `hostPath` volume (`deploy/kind-config.yaml`'s
+`extraMounts`) mounted read-only into every coordinator/worker/bench pod at
+the same path. This needed zero application code changes -- `worker_server.go`
+already just opens whatever path the coordinator sends over the wire. A real
+multi-node cluster would need a ReadOnlyMany PVC (NFS/EFS-backed) or
+streaming file bytes over gRPC instead; both are flagged, neither is built
+here.
+
+### What's deployed
+
+- `cordage-worker` Deployment (replica count = the scale knob) + `cordage-worker-headless`
+  headless Service, for DNS-based discovery.
+- `cordage-coordinator` Deployment (`-listen` mode, replicas: 1) + a
+  ClusterIP Service, reached via `kubectl port-forward` for `cordage query`.
+- `cordage-schema` ConfigMap (`benchmarks/schema.json`'s contents), mounted
+  into the coordinator only -- workers get schema per-shard over the wire.
+- `cordage-bench`, an idle pod (same image/mounts as the coordinator) used
+  to run one-shot `cordage coordinator ...` invocations via `kubectl exec`,
+  since `Coordinator.Query`'s RPC deliberately never returns row counts
+  (see `coordinator.proto`) and the scaling table below needs `rows/sec`.
+
+Manifests: `deploy/kind-config.yaml`, `deploy/k8s/*.yaml`. Image: root
+`Dockerfile` (multi-stage, `golang:1.26-alpine` builder, `gcr.io/distroless/static-debian12`
+final).
+
+### Deploying
+
+```
+docker build -t cordage:local .
+sed "s#__REPO_ROOT__#$(pwd)#" deploy/kind-config.yaml > /tmp/cordage-kind-config.yaml
+kind create cluster --name cordage --config /tmp/cordage-kind-config.yaml
+kind load docker-image cordage:local --name cordage
+kubectl --context kind-cordage apply -f deploy/k8s/
+kubectl --context kind-cordage rollout status deployment/cordage-worker
+kubectl --context kind-cordage rollout status deployment/cordage-coordinator
+kubectl --context kind-cordage wait --for=condition=Ready pod/cordage-bench
+```
+
+### Correctness under scaling
+
+```
+kubectl --context kind-cordage port-forward svc/cordage-coordinator 9000:9000 &
+cordage query -grpc localhost:9000 "SELECT station, MIN(temperature), AVG(temperature), MAX(temperature) GROUP BY station"
+kubectl --context kind-cordage scale deployment/cordage-worker --replicas=4
+kubectl --context kind-cordage rollout status deployment/cordage-worker
+cordage query -grpc localhost:9000 "SELECT station, MIN(temperature), AVG(temperature), MAX(temperature) GROUP BY station"
+```
+
+Both runs returned identical per-station count/min/max/avg. The coordinator
+process was never restarted between them -- `DNSDiscoverer` picked up the
+new worker pods on the second query's fresh shard-planning pass.
+
+### Scaling: 1, 2, 4, 8 worker replicas vs. throughput
+
+Same dataset/query as every prior milestone's table
+(`--group-by station --measure temperature:min,avg,max`), now run inside the
+cluster via `kubectl exec` into `cordage-bench` (one-shot `cordage
+coordinator ... -worker-discovery-dns cordage-worker-headless:50051`) after
+scaling `cordage-worker` to each replica count. Each row is the mean of 3
+consecutive runs:
+
+| Worker replicas | Wall time | Rows/sec | Speedup vs M0 |
+|---|---|---|---|
+| 1 | 0.895 s | 11,177,263 | 0.70x |
+| 2 | 0.461 s | 21,704,243 | 1.35x |
+| 4 | 0.248 s | 40,337,399 | 2.51x |
+| 8 | 0.171 s | 59,122,715 | 3.68x |
+
+(Speedup vs the M0 baseline's 16,047,577 rows/sec `run` figure, same
+reference point M1/M3 used.)
+
+**Near-linear from 1 to 4, softening by 8**: 1→2 replicas is a clean 1.94x,
+2→4 is 1.86x, but 4→8 is only 1.47x -- the same-hardware M3 loopback table
+reached 85.1M rows/sec at 8 real processes, well above this table's 59.1M.
+The gap isn't the `Discoverer`/Kubernetes work regressing anything -- it's
+everything M3 didn't have to contend with: all pods (2 workers up to 8,
+1 coordinator, 1 bench pod, plus `kind`'s own control-plane pods --
+etcd, kube-apiserver, coredns, kube-proxy, kindnet) share one `kind` node's
+12 cores, and every gRPC call now crosses a CNI bridge/veth pair instead of
+raw loopback. The scaling *shape* -- replica count up, wall time down, same
+correctness -- is the actual exit criterion; the absolute numbers are a
+kind-cluster-on-a-laptop artifact, not a production one.
+
+### Reproducing
+
+```
+for n in 1 2 4 8; do
+  kubectl --context kind-cordage scale deployment/cordage-worker --replicas=$n
+  kubectl --context kind-cordage rollout status deployment/cordage-worker --timeout=90s
+  for i in 1 2 3; do
+    kubectl --context kind-cordage exec cordage-bench -- /cordage coordinator \
+      --file /data/measurements.csv --schema /config/schema.json \
+      --group-by station --measure temperature:min,avg,max \
+      --worker-discovery-dns cordage-worker-headless:50051
+  done
+done
+```
+
+Tear down: `kind delete cluster --name cordage`.

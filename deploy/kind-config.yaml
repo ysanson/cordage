@@ -1,0 +1,17 @@
+# Single-node kind cluster used for the M5 local deployment/scaling demo.
+# hostPath must be an absolute path -- substitute __REPO_ROOT__ before use:
+#
+#   sed "s#__REPO_ROOT__#$(pwd)#" deploy/kind-config.yaml > /tmp/cordage-kind-config.yaml
+#   kind create cluster --config /tmp/cordage-kind-config.yaml
+#
+# Every pod (coordinator, worker, at any replica count) lands on this one
+# node, so a plain hostPath volume pointed at containerPath below is shared
+# across all of them -- see the M5 plan's storage decision for why this is
+# demo-only and not how a real multi-node cluster would do it.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraMounts:
+  - hostPath: __REPO_ROOT__/benchmarks/data
+    containerPath: /mnt/cordage-data

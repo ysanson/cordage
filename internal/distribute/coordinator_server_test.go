@@ -54,9 +54,9 @@ func TestCoordinatorServerQuery(t *testing.T) {
 	}
 
 	coordAddr := startTestCoordinator(t, CoordinatorConfig{
-		Schema:      schema,
-		FilePath:    path,
-		WorkerAddrs: addrs,
+		Schema:   schema,
+		FilePath: path,
+		Discover: StaticDiscoverer(addrs),
 	})
 	client := dialTestCoordinator(t, coordAddr)
 
@@ -83,9 +83,9 @@ func TestCoordinatorServerQueryRejectsPercentile(t *testing.T) {
 
 	addr := startTestWorker(t)
 	coordAddr := startTestCoordinator(t, CoordinatorConfig{
-		Schema:      schema,
-		FilePath:    path,
-		WorkerAddrs: []string{addr},
+		Schema:   schema,
+		FilePath: path,
+		Discover: StaticDiscoverer([]string{addr}),
 	})
 	client := dialTestCoordinator(t, coordAddr)
 
@@ -109,9 +109,9 @@ func TestCoordinatorServerQueryUnknownColumn(t *testing.T) {
 
 	addr := startTestWorker(t)
 	coordAddr := startTestCoordinator(t, CoordinatorConfig{
-		Schema:      schema,
-		FilePath:    path,
-		WorkerAddrs: []string{addr},
+		Schema:   schema,
+		FilePath: path,
+		Discover: StaticDiscoverer([]string{addr}),
 	})
 	client := dialTestCoordinator(t, coordAddr)
 

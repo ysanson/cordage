@@ -14,16 +14,18 @@ import (
 // CoordinatorConfig is a long-lived Coordinator's static, load-once
 // configuration -- everything about a `cordage coordinator --listen`
 // process that does not vary from query to query. Every incoming Query
-// RPC re-plans shards fresh against this same Schema/FilePath/
-// WorkerAddrs (see PlanShards) -- there is no caching and no
-// live-tailing of a growing file.
+// RPC calls Discover fresh and re-plans shards against this same
+// Schema/FilePath (see PlanShards) -- there is no caching and no
+// live-tailing of a growing file, and Discover may itself return a
+// different address set from call to call (e.g. a Kubernetes worker
+// Deployment's replica count changing between queries).
 type CoordinatorConfig struct {
-	Schema      ingest.Schema
-	FilePath    string
-	WorkerAddrs []string
-	OnError     ingest.ErrorPolicy
-	BatchSize   int
-	BufferSize  int
+	Schema     ingest.Schema
+	FilePath   string
+	Discover   Discoverer
+	OnError    ingest.ErrorPolicy
+	BatchSize  int
+	BufferSize int
 }
 
 // CoordinatorServer implements distproto.CoordinatorServer: it turns one
@@ -59,7 +61,12 @@ func (s *CoordinatorServer) Query(ctx context.Context, req *distproto.QueryReque
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	shards, err := PlanShards(s.cfg.FilePath, s.cfg.WorkerAddrs, s.cfg.Schema)
+	addrs, err := s.cfg.Discover()
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	shards, err := PlanShards(s.cfg.FilePath, addrs, s.cfg.Schema)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

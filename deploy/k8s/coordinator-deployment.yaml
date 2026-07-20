@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cordage-coordinator
+  labels:
+    app: cordage-coordinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cordage-coordinator
+  template:
+    metadata:
+      labels:
+        app: cordage-coordinator
+    spec:
+      containers:
+      - name: cordage-coordinator
+        image: cordage:local
+        imagePullPolicy: IfNotPresent
+        command:
+        - /cordage
+        - coordinator
+        - --listen
+        - :9000
+        - --file
+        - /data/measurements.csv
+        - --schema
+        - /config/schema.json
+        - --worker-discovery-dns
+        - cordage-worker-headless:50051
+        ports:
+        - containerPort: 9000
+        volumeMounts:
+        - name: dataset
+          mountPath: /data
+          readOnly: true
+        - name: schema
+          mountPath: /config
+      volumes:
+      - name: dataset
+        hostPath:
+          path: /mnt/cordage-data
+          type: Directory
+      - name: schema
+        configMap:
+          name: cordage-schema

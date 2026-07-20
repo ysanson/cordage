@@ -1,0 +1,15 @@
+# Headless (clusterIP: None): DNS returns one A record per ready worker
+# pod, which is what internal/distribute.DNSDiscoverer resolves before
+# every distributed run -- this is the whole discovery mechanism, no
+# Kubernetes API access needed.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cordage-worker-headless
+spec:
+  clusterIP: None
+  selector:
+    app: cordage-worker
+  ports:
+  - port: 50051
+    targetPort: 50051

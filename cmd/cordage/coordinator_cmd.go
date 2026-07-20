@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,7 +26,8 @@ func runCoordinator(args []string) error {
 	batchSize := fs.Int("batch-size", 0, "rows per batch (0 = package default)")
 	bufferSize := fs.Int("buffer-size", 0, "per-chunk read buffer size in bytes (0 = package default)")
 	groupBy := fs.String("group-by", "", "comma-separated group-by column names (empty = one global group)")
-	workerAddrs := fs.String("workers", "", "comma-separated worker addresses, host:port,host:port,... (required)")
+	workerAddrs := fs.String("workers", "", "comma-separated worker addresses, host:port,host:port,... (mutually exclusive with -worker-discovery-dns; one is required)")
+	workerDiscoveryDNS := fs.String("worker-discovery-dns", "", "host:port of a Kubernetes headless Service; re-resolved via DNS before every run so worker addresses track replica count (mutually exclusive with -workers)")
 	listen := fs.String("listen", "", "if set, run as a long-lived query server on this address (host:port) instead of one-shot mode; mutually exclusive with -group-by/-measure")
 	var measures measureFlags
 	fs.Var(&measures, "measure", `measure spec "column:func1,func2,..." (funcs: sum,min,max,avg,distinct; percentile funcs are not supported in distributed mode); repeatable`)
@@ -39,8 +41,23 @@ func runCoordinator(args []string) error {
 	if *schemaPath == "" {
 		return fmt.Errorf("-schema is required for coordinator")
 	}
-	if *workerAddrs == "" {
-		return fmt.Errorf("-workers is required for coordinator (comma-separated host:port list)")
+	if (*workerAddrs == "") == (*workerDiscoveryDNS == "") {
+		return fmt.Errorf("coordinator: exactly one of -workers or -worker-discovery-dns is required")
+	}
+
+	var discoverer distribute.Discoverer
+	if *workerAddrs != "" {
+		discoverer = distribute.StaticDiscoverer(strings.Split(*workerAddrs, ","))
+	} else {
+		host, portStr, err := net.SplitHostPort(*workerDiscoveryDNS)
+		if err != nil {
+			return fmt.Errorf("-worker-discovery-dns must be host:port: %w", err)
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			return fmt.Errorf("-worker-discovery-dns port must be numeric: %w", err)
+		}
+		discoverer = distribute.DNSDiscoverer(host, port)
 	}
 
 	schema, err := ingest.LoadSchemaFile(*schemaPath)
@@ -71,16 +88,19 @@ func runCoordinator(args []string) error {
 			return fmt.Errorf("coordinator: -listen cannot be combined with -group-by/-measure; each query supplies its own spec")
 		}
 		return runCoordinatorServe(*listen, distribute.CoordinatorConfig{
-			Schema:      schema,
-			FilePath:    *filePath,
-			WorkerAddrs: strings.Split(*workerAddrs, ","),
-			OnError:     onError,
-			BatchSize:   *batchSize,
-			BufferSize:  *bufferSize,
+			Schema:     schema,
+			FilePath:   *filePath,
+			Discover:   discoverer,
+			OnError:    onError,
+			BatchSize:  *batchSize,
+			BufferSize: *bufferSize,
 		})
 	}
 
-	addrs := strings.Split(*workerAddrs, ",")
+	addrs, err := discoverer()
+	if err != nil {
+		return err
+	}
 	shards, err := distribute.PlanShards(*filePath, addrs, schema)
 	if err != nil {
 		return err
@@ -117,6 +137,6 @@ func runCoordinatorServe(listen string, cfg distribute.CoordinatorConfig) error 
 	}
 	srv := grpc.NewServer()
 	distproto.RegisterCoordinatorServer(srv, distribute.NewCoordinatorServer(cfg))
-	fmt.Printf("cordage coordinator listening on %s (file=%s workers=%d)\n", lis.Addr(), cfg.FilePath, len(cfg.WorkerAddrs))
+	fmt.Printf("cordage coordinator listening on %s (file=%s)\n", lis.Addr(), cfg.FilePath)
 	return srv.Serve(lis)
 }
