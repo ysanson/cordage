@@ -34,7 +34,7 @@ func TestRunParallelMatchesSingleAggregator(t *testing.T) {
 
 	cities := []string{"Tokyo", "Osaka", "Kyoto", "Nagoya", "Sapporo"}
 	var allRows [][]string
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		city := cities[i%len(cities)]
 		temp := strconv.FormatFloat(float64(i)*0.37, 'f', -1, 64)
 		hits := strconv.Itoa(i % 13)
@@ -99,7 +99,7 @@ func TestRunParallelAddErrorAborts(t *testing.T) {
 	batches := make(chan *ingest.Batch)
 	go func() {
 		defer close(batches)
-		for i := 0; i < workers; i++ {
+		for range workers {
 			batches <- badBatch
 		}
 	}()

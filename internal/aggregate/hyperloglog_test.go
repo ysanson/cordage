@@ -32,11 +32,11 @@ func TestHyperLogLogAccuracy(t *testing.T) {
 				exact[v] = struct{}{}
 				h.add(hashValue(ingest.Value{Type: ingest.TypeInt64, I64: v}))
 			}
-			for i := 0; i < card; i++ {
+			for i := range card {
 				addValue(int64(i))
 			}
 			extraDraws := 200_000
-			for i := 0; i < extraDraws; i++ {
+			for range extraDraws {
 				addValue(int64(rng.IntN(card)))
 			}
 
@@ -75,7 +75,7 @@ func TestHyperLogLogMergeIsExact(t *testing.T) {
 	single := newHyperLogLog()
 	part1 := newHyperLogLog()
 	part2 := newHyperLogLog()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		v := int64(rng.IntN(card))
 		hash := hashValue(ingest.Value{Type: ingest.TypeInt64, I64: v})
 		single.add(hash)

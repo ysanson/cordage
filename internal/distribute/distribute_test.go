@@ -41,7 +41,7 @@ func writeTestCSV(t *testing.T, rows int) (path string, dataRows int) {
 	stations := []string{"Tokyo", "Osaka", "Kyoto", "Nagoya", "Sapporo", "Fukuoka", "Sendai", "Kobe"}
 	var sb strings.Builder
 	sb.WriteString("station;temperature\n")
-	for i := 0; i < rows; i++ {
+	for i := range rows {
 		fmt.Fprintf(&sb, "%s;%.1f\n", stations[i%len(stations)], float64(i%400)/10.0-20)
 	}
 	p := filepath.Join(t.TempDir(), "data.csv")

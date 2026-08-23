@@ -15,14 +15,11 @@ func buildBenchBatches(totalRows, batchSize int) []*ingest.Batch {
 	stations := []string{"Tokyo", "Osaka", "Kyoto", "Nagoya", "Sapporo", "Fukuoka", "Sendai", "Kobe"}
 	var batches []*ingest.Batch
 	for start := 0; start < totalRows; start += batchSize {
-		end := start + batchSize
-		if end > totalRows {
-			end = totalRows
-		}
+		end := min(start+batchSize, totalRows)
 		n := end - start
 		strs := make([]string, n)
 		f64s := make([]float64, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			idx := start + i
 			strs[i] = stations[idx%len(stations)]
 			f64s[i] = float64(idx%400)/10.0 - 20

@@ -19,10 +19,7 @@ func TestPlanChunks(t *testing.T) {
 	}
 	for _, c := range cases {
 		chunks := PlanChunks(c.size, c.n)
-		wantN := c.n
-		if wantN < 1 {
-			wantN = 1
-		}
+		wantN := max(c.n, 1)
 		if c.size <= 0 {
 			if len(chunks) != 1 || chunks[0].Length != 0 {
 				t.Errorf("PlanChunks(%d, %d) = %+v, want single empty chunk", c.size, c.n, chunks)
@@ -47,7 +44,7 @@ func TestPlanChunks(t *testing.T) {
 
 func TestAlignChunksNeverSplitsARow(t *testing.T) {
 	var sb strings.Builder
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		sb.WriteString(strings.Repeat("x", i%7+1))
 		sb.WriteByte('\n')
 	}

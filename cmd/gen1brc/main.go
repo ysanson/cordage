@@ -45,7 +45,7 @@ func run(rows int64, out string, seed uint64, stddev float64, sensorCardinality 
 
 	start := time.Now()
 	var line []byte
-	for i := int64(0); i < rows; i++ {
+	for i := range rows {
 		st := stations[rng.IntN(len(stations))]
 		temp := st.mean + rng.NormFloat64()*stddev
 

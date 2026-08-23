@@ -198,7 +198,7 @@ func TestIngestMultiChunkMatchesSingleChunk(t *testing.T) {
 	sb.WriteString("id,value\n")
 	const n = 5000
 	var wantSum float64
-	for i := 0; i < n; i++ {
+	for i := range n {
 		v := float64(i) + 0.5
 		wantSum += v
 		fmt.Fprintf(&sb, "row-%d,%v\n", i, v)

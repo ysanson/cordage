@@ -14,7 +14,7 @@ func stringKeyGroup(s string) *groupAccum {
 func TestGroupTableGrowthPreservesEntries(t *testing.T) {
 	table := newGroupTable()
 	const n = 500
-	for i := 0; i < n; i++ {
+	for i := range n {
 		s := fmt.Sprintf("key-%d", i)
 		hash := uint64(i) * 2654435761 // arbitrary distinct-ish hashes; growth must still work regardless of distribution
 		if _, ok := table.findByString(hash, s); ok {
@@ -25,7 +25,7 @@ func TestGroupTableGrowthPreservesEntries(t *testing.T) {
 	if table.size != n {
 		t.Fatalf("table.size = %d, want %d", table.size, n)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		s := fmt.Sprintf("key-%d", i)
 		hash := uint64(i) * 2654435761
 		g, ok := table.findByString(hash, s)

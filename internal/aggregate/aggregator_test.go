@@ -306,7 +306,7 @@ func TestMergeMatchesSingleAggregator(t *testing.T) {
 
 	cities := []string{"Tokyo", "Osaka", "Kyoto", "Nagoya", "Sapporo"}
 	var allRows [][]string
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		city := cities[i%len(cities)]
 		temp := strconv.FormatFloat(float64(i)*0.37, 'f', -1, 64)
 		hits := strconv.Itoa(i % 13)
@@ -540,7 +540,7 @@ func TestMergeDistinctIsExact(t *testing.T) {
 
 	cities := []string{"Tokyo", "Osaka", "Kyoto", "Nagoya", "Sapporo"}
 	var allRows [][]string
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		allRows = append(allRows, []string{cities[i%len(cities)], "1.0", "0"})
 	}
 

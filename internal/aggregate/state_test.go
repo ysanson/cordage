@@ -55,7 +55,7 @@ func distinctSpec() (ingest.Schema, AggSpec) {
 func manyRows(n int) [][]string {
 	cities := []string{"Tokyo", "Osaka", "Kyoto", "Nagoya", "Sapporo"}
 	rows := make([][]string, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		rows[i] = []string{
 			cities[i%len(cities)],
 			strconv.FormatFloat(float64(i)*0.37, 'f', -1, 64),
@@ -107,7 +107,7 @@ func TestMergeStateMatchesInProcessMerge(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	chunk := len(allRows) / k
-	for i := 0; i < k; i++ {
+	for i := range k {
 		start, end := i*chunk, (i+1)*chunk
 		if i == k-1 {
 			end = len(allRows)

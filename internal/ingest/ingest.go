@@ -171,10 +171,7 @@ func resolveSchema(src Source, cfg Config) (Schema, *lineReader, error) {
 // peekHeaderColumns reads just enough of a ChunkableSource's start to
 // extract the header line, without disturbing any chunk's own read.
 func peekHeaderColumns(cs ChunkableSource, size int64, delim byte) ([]string, error) {
-	length := int64(probeWindow)
-	if size < length {
-		length = size
-	}
+	length := min(size, int64(probeWindow))
 	r, err := cs.ChunkReader(0, length)
 	if err != nil {
 		return nil, fmt.Errorf("ingest: peek header: %w", err)

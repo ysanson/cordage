@@ -121,7 +121,7 @@ func TestTDigestSkipsNaN(t *testing.T) {
 	withNaN := newTDigest()
 	without := newTDigest()
 	const n = 5000
-	for i := 0; i < n; i++ {
+	for i := range n {
 		v := rng.NormFloat64()
 		without.Add(v)
 		withNaN.Add(v)
@@ -146,7 +146,7 @@ func TestTDigestMergeWithinTolerance(t *testing.T) {
 	single := newTDigest()
 	part1 := newTDigest()
 	part2 := newTDigest()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		v := rng.NormFloat64()*5 + 100
 		single.Add(v)
 		if i%2 == 0 {

@@ -15,7 +15,7 @@ func writeBenchCSV(b *testing.B, rows int) string {
 	b.Helper()
 	stations := []string{"Tokyo", "Osaka", "Kyoto", "Nagoya", "Sapporo", "Fukuoka", "Sendai", "Kobe"}
 	var sb strings.Builder
-	for i := 0; i < rows; i++ {
+	for i := range rows {
 		fmt.Fprintf(&sb, "%s;%.1f\n", stations[i%len(stations)], float64(i%400)/10.0-20)
 	}
 	path := filepath.Join(b.TempDir(), "bench.csv")

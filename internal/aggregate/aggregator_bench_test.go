@@ -16,7 +16,7 @@ func benchBatch(numRows int) *ingest.Batch {
 		{Type: ingest.TypeString, Strs: make([]string, 0, numRows)},
 		{Type: ingest.TypeFloat64, F64s: make([]float64, 0, numRows)},
 	}
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		cols[0].Strs = append(cols[0].Strs, cities[i%len(cities)])
 		cols[1].F64s = append(cols[1].F64s, float64(i%1000)*0.1)
 	}
@@ -63,7 +63,7 @@ func benchCompositeKeyBatch(numRows int) *ingest.Batch {
 		{Type: ingest.TypeString, Strs: make([]string, 0, numRows)},
 		{Type: ingest.TypeFloat64, F64s: make([]float64, 0, numRows)},
 	}
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		cols[0].Strs = append(cols[0].Strs, cities[i%len(cities)])
 		cols[1].Strs = append(cols[1].Strs, regions[i%len(regions)])
 		cols[2].F64s = append(cols[2].F64s, float64(i%1000)*0.1)
@@ -111,7 +111,7 @@ func benchHighCardinalityBatch(numRows, numGroups int) *ingest.Batch {
 		{Type: ingest.TypeString, Strs: make([]string, 0, numRows)},
 		{Type: ingest.TypeFloat64, F64s: make([]float64, 0, numRows)},
 	}
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		cols[0].Strs = append(cols[0].Strs, "key-"+strconv.Itoa(i%numGroups))
 		cols[1].F64s = append(cols[1].F64s, float64(i%1000)*0.1)
 	}
